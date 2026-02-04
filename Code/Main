@@ -1,0 +1,335 @@
+import numpy as np #numerical calculations, data analysis, statistical operations
+import math #mathematical computations
+import aubio #audio analysis, beat tracking, pitch detection
+import pyaudio #recording sounds from a microphone
+import pygame #developing 2D games, simulations
+import random #generates random data
+from pygametexting import pyg_text
+from time import time #measuring the duration of processes
+
+
+class player():
+    def __init__(self, size, x, w_ysize, frames,scream_force, gravity,color,vol_detection ):
+        self.size = size #size of the player 
+        self.x = x #horizontal position
+        self.w_ysize = w_ysize #vertical dimension
+        self.y = int(w_ysize / 2) #positioning the player vertically in the middle of the game window
+        self.frames = frames #frame rate
+        self.gravity = gravity * (1 / frames) #adjusting the gravity
+        self.vol_detection = vol_detection
+        self.scream_force = scream_force
+        self.color = color #for the letters ,PLAY BALANCE etc
+        self.box = pygame.image.load("Playing_Player.png").convert_alpha() #loading the image
+        
+        # Define pitch thresholds for moving up and down
+        self.pitch_threshold_low = 500 #if voice<500 hz goes down
+        self.pitch_threshold_high = 700 #if voice>700 hz goes up
+        #self.is_active = False       
+        
+    def update_based_on_pitch(self, pitch):
+        print("Current pitch:", pitch) #Debugging output to check the current pitch
+        if pitch > self.pitch_threshold_high:
+            print("Moving up")  # Debugging statement
+            self.y -= 10  #decrease y position to move up on the screen
+        elif pitch < self.pitch_threshold_low:
+            print("Moving down")  # Debugging statement
+            self.y += 10  #increase y position to move down on the screenS                      
+        
+    def scream(self, vol):
+        #method to react to volume inputs
+        pass
+      
+    def draw(self, window, angle):
+    # Draw the player on the screen at the specified rotation angle
+     true_box = pygame.transform.rotate(self.box, angle)  # rotate the player's image
+     rotator_pos = true_box.get_rect()  # get the rectangle that bounds the rotated image
+     rotator_pos.center = (self.x, self.y)  # set the center of the rectangle to the player's position
+     window.blit(true_box, rotator_pos)  # render the rotated image to the screen at the new position
+      
+       
+class pipe():
+    def __init__(self, win_size_x, win_size_y, speed, size, passage_loc, passage_size):
+
+        self.win_size_x = win_size_x #width of the game window
+        self.win_size_y = win_size_y #height of the game window
+        self.x = win_size_x #initial horizontal position of the pipe, starting at the right edge of the window
+        self.speed = speed ##horizontal speed of the pipe, determines how fast it moves across the screen
+
+        self.pipe_img = pygame.image.load("Pipe.png")
+        pipe_size = self.pipe_img.get_rect().size[0] 
+        #get the width of the pipe image
+        
+        if size > pipe_size: #set the size of the pip
+            self.size = pipe_size
+        # Use the image size if the specified size exceeds the image width
+            
+        else:
+            self.size = size
+        #use the specified size if it's within the image width limits
+
+        self.passage_loc = passage_loc 
+        #vertical position of the top of the gap
+        self.passage_size = passage_size 
+        #height of the gap, controls where the player can pass through
+
+        
+    def pipe_move(self):
+         self.x -= self.speed 
+    #decrease the x position by the speed, moving the pipe to the left
+        
+    def draw(self, window):
+     #draw the pipe and its gap on the game window    
+        border = 3
+        #set a border width to visually distinguish the pipe edge
+        
+        hole = self.passage_loc + self.passage_size
+        #calculate the lower boundary of the gap
+        
+        pygame.draw.rect(window, (0,0,0), (self.x-border,0,self.size+2*border,self.passage_loc+border))
+        #upper part of the pipe
+        pygame.draw.rect(window, (0,0,0), (self.x-border,hole-border,self.size+2*border,self.win_size_y-hole+border))
+        #lower part of the pipe
+         #blit the pipe image to the window
+        window.blit(self.pipe_img, (self.x, 0), area = (0, 0, self.size, self.passage_loc))
+        window.blit(self.pipe_img, (self.x, hole), area = (0, 0, self.size, self.win_size_y - hole))
+# PyAudio object.
+#handle real-time audio input
+p = pyaudio.PyAudio()
+
+RATE = 22100
+CHUNK = 1024 #size of each audio buffer
+
+# Open stream.
+stream = p.open(format=pyaudio.paFloat32,
+    channels=1, rate=RATE, input=True,
+    frames_per_buffer=CHUNK) #stream for input (recording) 
+#number of frames per buffer
+
+pDetection = aubio.pitch("yin", 2048, CHUNK, RATE)
+#initialize pitch detection object
+pDetection.set_unit("Hz")
+#set the unit of pitch to Hertz
+pDetection.set_tolerance(0.8)
+#set pitch detection tolerance
+
+pygame.init()
+#window size for the game
+win_sizes = (600,600)
+
+
+wind = pygame.display.set_mode(win_sizes)
+ #create a game window with dimensions 600x600 pixels
+pygame.display.set_caption("Flappy Voice")
+
+txt = pyg_text(20,(0,0,0),"comicsansms", Win = wind)
+#create a text object for on-screen text
+
+clock = pygame.time.Clock()
+#setup game clock for timing control
+clock_time = 30 
+#the game clock to tick at 30 times per second
+run = True #game loop
+pipe_hole = 300
+#vertical position of the hole in the pipe
+hole_size = 100
+#size of the gap in the pipe through which the player must pass
+pipe_speed = 8
+#speed at which the pipes move leftward
+pipe_size = 75
+# Width of the pipes
+pipe_x_limit = int(win_sizes[0]*(3/5))
+ #horizontal limit for spawning new pipes
+hole_limit = 50
+#minimum vertical limit for the pipe gap
+score = 0
+violation = False
+#flag to check if scoring is possible
+scoring = False
+score_detection = False
+#flag to detect scoring events
+BG = pygame.image.load("BG.png")
+you_died_image = pygame.image.load("you_died.png").convert_alpha()
+
+#game states
+Menu = True
+#show the menu
+Play = False
+#control gameplay state
+Replay = False
+#enable replay option
+about_to_start = False
+#flag to check if the game is about to start
+transition = [False,0]
+#array to handle transition states and timing
+vol_limit = 100
+#volume limit for voice input
+
+while run:
+    clock.tick(clock_time)
+     #control the game update rate (frames per second)
+    for event in pygame.event.get():
+        ##check for the QUIT event to stop the game
+        if event.type == pygame.QUIT:
+            run = False
+            #check for the QUIT event to stop the game
+            
+    if Menu or Replay:
+        
+        wind.fill(pygame.Color("blue"))
+        #fill the screen with blue color to indicate menu or replay state
+        if time()-transition[1]>=0.5:
+        #check if half a second has passed to reset transition
+            transition = [False,0]
+            
+        if about_to_start:
+            #create a player object
+            pp = player(20, 300, 600, clock_time, 10, 3, (0,0,255), vol_limit)
+            pipe_hole = 300
+            #initialize pipes with the specified dimensions and speed
+            pipes = [pipe(win_sizes[0], win_sizes[1], pipe_speed, pipe_size, pipe_hole, hole_size)]
+            score = 0 #reset the score for a new game
+            #reset flags to transition into the game play state
+            about_to_start = False
+            Play = True
+            Menu = False
+            Replay = False
+            
+    if Replay: #check if the game is in the 'Replay' state, which indicates the player has lost
+        #display a 'game over' image at the center of the window
+        image_rect = you_died_image.get_rect(center=(win_sizes[0] / 2, win_sizes[1] /2))
+        wind.blit(you_died_image, image_rect)
+        #display the player's score 
+        txt.screen_text_centerpos("Score: {0}".format(score),int(win_sizes[0]/2), 50, size=40,  color = (255,255,255))
+        #check if the 'Play Again' button is pressed
+        if txt.screen_button_centerpos("Play Again", int(win_sizes[0]*3/4), 550, size=40 , color = (255,255,255)):
+            pygame.time.delay(100)  #add a short delay to prevent accidental rapid button presses
+            transition = [True,time()] #set transition to True and record the current time
+            
+            about_to_start = True #set flag to start a new game
+            #check if the 'Back to Menu' button is pressed
+        if txt.screen_button_centerpos("Back to Menu", int(win_sizes[0]/4), 550, transition[0], color = (255,255,255)):
+            pygame.time.delay(100)
+            transition = [True,time()]
+            
+            Menu = True  #switch to the Menu state
+            
+            Replay = False #turn off the Replay state
+            
+            
+    if Menu:
+        #title centered at the top of the screen with colours
+        txt.screen_text_centerpos("Flappy Note", int(win_sizes[0]/2), 150, size = 40, color = (255,255,255))
+          #display a button and check if it is clicked to start the game  
+        if txt.screen_button_centerpos("Play Balance", int(win_sizes[0]/2), 300, transition[0],size = 30, color = (255,255,255)) and not transition[0]:
+            pygame.time.delay(100)
+            #delay to prevent multiple rapid clicks
+            
+            about_to_start = True #indicates that the game is about to start
+        
+         #display current microphone sensitivity setting    
+        txt.screen_text_centerpos("Mic Sensitivity: {}".format(vol_limit),int(win_sizes[0]/2), 450, color = (224,224,224))
+        #display an to increase microphone sensitivity and check if it is clicked
+        if txt.screen_button_centerpos("More", int(win_sizes[0]/2)-50, 500, transition[0], color = (224,224,224)) and not transition[0]:
+            pygame.time.delay(100)
+            
+            vol_limit += 100 #increase volume limit by 100
+            
+            if vol_limit > 1000: #cap the volume limit at 1000
+                vol_limit = 1000
+            
+        if txt.screen_button_centerpos("Less", int(win_sizes[0]/2)+50, 500, transition[0], color = (224,224,224)) and not transition[0]:
+            pygame.time.delay(100)  #delay to prevent multiple rapid clicks
+            
+            vol_limit -= 100
+            
+            if vol_limit < 100: #set a minimum volume limit of 100
+                vol_limit = 100
+            
+            
+    
+    if Play:
+        #blit the background image to the window
+        wind.blit(BG, (0, 0))
+         #read audio data from the stream    
+        data = stream.read(CHUNK)
+        #convert audio bytes to numpy array for processing
+        samples = np.frombuffer(data, dtype=np.float32)
+        #detect pitch using the Aubio library
+        pitch = pDetection(samples)[0]
+        #update the player's position based on the pitch
+        if pitch>0:  # If there's a valid pitch detected 
+            #update the player's position based on the pitch
+            pp.update_based_on_pitch(pitch)
+        else:
+            pass
+        # Compute the energy (volume) of the
+        # current frame
+        volume = np.sum(samples**2)/len(samples)
+        if volume == 0: #stay at the current position
+            pass
+        else:
+            volume = int(math.log(volume)*10**2)
+        #calculate a modified volume used for some game logic
+        y_vol = int(volume/2)
+         #move each pipe object in the list of pipes
+        for i in pipes:
+            i.pipe_move()
+        #check if the last pipe in the list needs to be followed by a new pipe
+        if pipes[len(pipes)-1].x <= pipe_x_limit:
+
+            if random.choice([False,True]):
+                pipe_hole += random.randint(0,100)
+                if pipe_hole > win_sizes[1] - hole_size - hole_limit:
+                    pipe_hole = win_sizes[1] - hole_size - hole_limit
+            else:
+                pipe_hole -= random.randint(0,100)
+                if pipe_hole < hole_limit:
+                    pipe_hole = hole_limit
+             #append a new pipe to the list with updated position
+            pipes.append(pipe(win_sizes[0], win_sizes[1], pipe_speed, pipe_size, pipe_hole, hole_size))
+
+        if pipes[0].x < -pipes[0].size:
+            pipes.pop(0)
+         #trigger any special actions if the player screams (based on volume
+        pp.scream(volume)
+        scoring = True
+        #collision detection with pipes
+        for i in pipes:
+             #define half the size of the player for collision calculations
+            half_size = int(pp.size/2)
+            #check if the player is within the horizontal boundaries of the pipe
+            x_cond_1 = (i.x <= pp.x + half_size <= i.x + i.size)
+            x_cond_2 = (i.x <= pp.x - half_size <= i.x + i.size)
+
+            if x_cond_1 or x_cond_2:
+                scoring = False
+                score_detection = True
+                y_cond_1 = (i.passage_loc <= pp.y + half_size <= i.passage_loc+ i.passage_size)
+                y_cond_2 = (i.passage_loc <= pp.y - half_size <= i.passage_loc+ i.passage_size)
+
+                if  y_cond_1 and y_cond_2:
+                    pass
+                else:  #set the player to have violated the game rules, triggering game over
+                    #i.color = (255,0,0)
+                    violation = True
+                    Play = False
+                    Replay = True
+                break
+        #handle scoring based on successful passing through pipes
+        if scoring and score_detection:
+            if not violation:
+                score += 1
+            violation = False
+            score_detection = False
+        for i in pipes:  #draw pipes and player
+            i.draw(wind)
+        pp.draw(wind, 0)
+        #display the score
+        txt.screen_text_initpos("Score: {0}".format(score),0,25)
+    
+    pygame.display.update()
+
+stream.stop_stream() #Stops processing of audio stream
+stream.close()
+p.terminate() #terminates PyAudio
+pygame.quit() #terminate pygame
